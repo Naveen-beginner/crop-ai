@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CropAI — AI-Powered Crop Health & Disease Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+    <!-- Top Navigation -->
+    <header class="navbar">
+        <div class="container nav-container">
+            <div class="logo">
+                <span class="logo-icon">🌱</span>
+                <span class="logo-text">Crop<strong>AI</strong></span>
+            </div>
+            <div class="badge-tag">Multimodal Agronomy Engine</div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="container main-content">
+
+        <!-- Hero Section -->
+        <section class="hero-section">
+            <h1 class="hero-title">Instant Crop Health & Disease Diagnostics</h1>
+            <p class="hero-subtitle">Upload a photograph of your crop or foliage for instant leaf pathology, severity
+                calculation, and agronomical recommendations.</p>
+        </section>
+
+        <!-- Upload & Input Card -->
+        <section class="card upload-card">
+            <form id="analysisForm">
+
+                <!-- Drag & Drop Zone -->
+                <div class="drop-zone" id="dropZone">
+                    <input type="file" id="fileInput" name="image" accept="image/jpeg,image/png,image/webp" hidden />
+                    <div class="drop-zone-prompt" id="dropPrompt">
+                        <div class="upload-icon-circle">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                        </div>
+                        <p class="drop-title">Drag & drop your crop image here</p>
+                        <p class="drop-desc">Supports JPG, PNG, WEBP (Max 10MB)</p>
+                        <button type="button" class="btn btn-secondary" id="browseBtn">Choose Image</button>
+                    </div>
+
+                    <!-- Image Preview -->
+                    <div class="preview-container hidden" id="previewContainer">
+                        <img id="imagePreview" alt="Crop preview" />
+                        <button type="button" class="btn-remove" id="removeImgBtn" title="Remove image">&times;</button>
+                    </div>
+                </div>
+
+                <!-- Cultivated Area Optional Inputs -->
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="totalArea" class="form-label">
+                            Total Cultivated Area <span class="text-muted">(Optional)</span>
+                        </label>
+                        <input type="number" step="any" min="0" id="totalArea" name="totalArea" class="form-control"
+                            placeholder="e.g. 2.5" />
+                    </div>
+                    <div class="form-group">
+                        <label for="areaUnit" class="form-label">Area Unit</label>
+                        <select id="areaUnit" name="areaUnit" class="form-control form-select">
+                            <option value="acres">Acres</option>
+                            <option value="hectares">Hectares</option>
+                            <option value="square meters">Square Meters</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="btn btn-primary btn-block" id="submitBtn">
+                    <span class="btn-text">Analyze Crop</span>
+                    <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                        <polyline points="12 5 19 12 12 19" />
+                    </svg>
+                </button>
+            </form>
+
+            <!-- Alert Box -->
+            <div class="alert-box hidden" id="errorBox">
+                <span class="alert-icon">⚠️</span>
+                <span class="alert-message" id="errorMessage">An error occurred.</span>
+            </div>
+        </section>
+
+        <!-- Loading State -->
+        <section class="card loading-card hidden" id="loadingCard">
+            <div class="spinner"></div>
+            <h3 class="loading-title" id="loadingStatus">Analyzing crop image...</h3>
+            <p class="loading-subtitle">Applying agronomical computer vision models</p>
+        </section>
+
+        <!-- Results Dashboard -->
+        <section class="results-dashboard hidden" id="resultsDashboard">
+
+            <!-- Top Overview Metrics -->
+            <div class="dashboard-grid grid-top">
+
+                <!-- Crop Identification Card -->
+                <div class="card metric-card">
+                    <div class="card-header-flex">
+                        <span class="section-tag">Identification</span>
+                        <span class="pill pill-confidence" id="cropConfidence">95% Confident</span>
+                    </div>
+                    <p class="metric-label">Identified Crop</p>
+                    <h2 class="metric-value text-accent" id="cropName">Tomato</h2>
+                </div>
+
+                <!-- Disease Status Card -->
+                <div class="card metric-card">
+                    <div class="card-header-flex">
+                        <span class="section-tag">Pathology</span>
+                        <span class="pill pill-severity" id="diseaseSeverity">Moderate</span>
+                    </div>
+                    <p class="metric-label">Disease Diagnosis</p>
+                    <h2 class="metric-value" id="diseaseName">Early Blight</h2>
+                    <p class="metric-subtext" id="diseaseStatusDesc">Visible symptoms match fungal pathogen.</p>
+                </div>
+
+                <!-- Overall AI Confidence Card -->
+                <div class="card metric-card">
+                    <div class="card-header-flex">
+                        <span class="section-tag">Diagnostic Quality</span>
+                        <span class="pill pill-quality" id="imageQuality">Good Quality</span>
+                    </div>
+                    <p class="metric-label">Overall AI Confidence</p>
+                    <div class="confidence-display">
+                        <h2 class="metric-value text-primary" id="overallConfidence">89%</h2>
+                        <div class="expert-flag" id="expertFlag">Expert Confirmation Not Required</div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Foliage Ratio & Cultivated Area Section -->
+            <div class="card section-card">
+                <h3 class="section-title">Visible Foliage Health & Cultivated Area Breakdown</h3>
+                <p class="section-description">
+                    Estimated visual distribution on uploaded photograph. Physical field calculations are calculated
+                    based on your optional input.
+                </p>
+
+                <!-- Ratio Bar -->
+                <div class="ratio-bar-wrapper">
+                    <div class="ratio-labels">
+                        <span class="ratio-text affected-text">Affected Visible Foliage: <strong
+                                id="affectedPctText">30%</strong></span>
+                        <span class="ratio-text healthy-text">Healthy Visible Foliage: <strong
+                                id="healthyPctText">70%</strong></span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-segment segment-affected" id="affectedBar" style="width: 30%"></div>
+                        <div class="progress-bar-segment segment-healthy" id="healthyBar" style="width: 70%"></div>
+                    </div>
+                </div>
+
+                <!-- Physical Area Estimations (Conditional) -->
+                <div class="area-stats-grid" id="physicalAreaContainer">
+                    <div class="area-stat-box">
+                        <span class="stat-box-label">Total Field Size</span>
+                        <span class="stat-box-val" id="totalCultivatedVal">—</span>
+                    </div>
+                    <div class="area-stat-box box-affected">
+                        <span class="stat-box-label">Estimated Affected Area</span>
+                        <span class="stat-box-val" id="estimatedAffectedVal">—</span>
+                    </div>
+                    <div class="area-stat-box box-healthy">
+                        <span class="stat-box-label">Estimated Healthy Area</span>
+                        <span class="stat-box-val" id="estimatedHealthyVal">—</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Visible Evidence & Symptoms Card -->
+            <div class="card section-card">
+                <h3 class="section-title">Observed Visual Symptoms</h3>
+                <p class="section-description">Pathological indicators identified directly in the photo.</p>
+                <ul class="bullet-list" id="evidenceList"></ul>
+            </div>
+
+            <!-- Fertilizer Recommendations -->
+            <div class="card section-card">
+                <div class="card-header-flex">
+                    <h3 class="section-title">Fertilizer & Soil Nutrition Guidance</h3>
+                    <span class="pill" id="fertStatusPill">Recommended</span>
+                </div>
+                <p class="section-description" id="fertReasonText">Agronomical fertilization strategy based on visual
+                    crop status.</p>
+                <div class="fertilizer-cards-grid" id="fertilizerCards"></div>
+            </div>
+
+            <!-- Action Plan & Precautions Grid -->
+            <div class="dashboard-grid grid-bottom">
+
+                <!-- Action Plan -->
+                <div class="card section-card">
+                    <h3 class="section-title">Recommended Actions</h3>
+                    <ul class="action-list" id="actionList"></ul>
+                </div>
+
+                <!-- Precautions -->
+                <div class="card section-card">
+                    <h3 class="section-title">Safety Precautions & Handling</h3>
+                    <ul class="precaution-list" id="precautionList"></ul>
+                </div>
+
+            </div>
+
+            <!-- New Analysis Button -->
+            <div class="text-center reset-wrapper">
+                <button class="btn btn-secondary btn-lg" id="resetBtn">Analyze Another Crop Image</button>
+            </div>
+
+            <!-- Disclaimer Footer -->
+            <div class="disclaimer-banner">
+                <strong>Agronomical Disclaimer:</strong> AI-generated analysis is for informational purposes only and
+                should not replace professional agricultural advice. Fertilizer application should be based on crop
+                requirements, soil conditions, local recommendations, and professional guidance.
+            </div>
+
+        </section>
+
+    </main>
+
+    <footer class="footer">
+        <div class="container text-center">
+            <p>© CropAI — Precision Agriculture Diagnostics Engine.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
