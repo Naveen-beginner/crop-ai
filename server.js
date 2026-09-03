@@ -137,7 +137,7 @@ async function generateWithModernFallback(genAI, imagePart) {
             console.log(`✅ Analysis successfully completed with ${modelName}`);
             return text;
         } catch (err) {
-            console.warn(`⚠️ ${modelName} received (${err.status || err.message || '503/Busy'}). Falling back...`);
+            console.warn(`⚠️ ${modelName} received (${err.status || err.message || '503/Busy'}). Falling back..`);
             lastError = err;
             // Brief pause before querying the next model tier
             await new Promise(res => setTimeout(res, 500));

@@ -13,8 +13,3 @@ git clone https://github.com/your-username/crop-ai.git
 cd crop-ai
 npm install
 ```
-
----
-# Testing
-### Test-1: tomato early blight disease symptoms leaf
-- Result: 
