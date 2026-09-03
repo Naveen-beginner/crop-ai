@@ -2,118 +2,72 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Busboy = require('busboy');
 
 const SYSTEM_PROMPT = `
-You are CropAI, a world-class agronomist and senior plant pathologist.
-Analyze the provided crop/plant photograph using rigorous agronomical diagnostic standards.
+You are CropAI, an elite agricultural plant pathologist and agronomist AI.
+Analyze the provided crop photograph quickly and accurately.
 
-### DIAGNOSTIC PROTOCOL:
-1. CROP IDENTIFICATION:
-   - Identify crop species by leaf venation, shape, phyllotaxy, margin, and texture (e.g., Tomato, Potato, Rice, Wheat, Maize/Corn, Cotton, Apple, Grape, Pepper/Chilli, Soybean, Banana, Citrus, Cucumber, etc.).
-   - Calibrate crop confidence: 85-99% if clearly identifiable, 60-84% if partially obscured. Do NOT return 0 unless the image is not a plant.
+DIAGNOSTIC PROTOCOL:
+1. Identify the crop species (e.g., Tomato, Potato, Rice, Wheat, Maize, Cotton, Apple, Grape, Pepper, Soybean, Banana, Citrus).
+2. Check for foliar diseases (Early/Late Blight, Powdery/Downy Mildew, Rust, Leaf Spot, Anthracnose, Mosaic Virus, Chlorosis). If healthy, set disease.detected to false, disease.name to "Healthy Plant / No Disease Detected", and severity to "None".
+3. Estimate percentage of visible foliage affected vs healthy (must total ~100%).
+4. Provide safe, practical fertilizer suggestions.
+5. Calibrate confidence realistically: 80-98% for clear photos, 65-79% for partial views (never return 0).
 
-2. PATHOLOGY & DISEASE DETECTION:
-   - Carefully inspect for:
-     * Fungal: Concentric rings (Early Blight), water-soaked lesions with white mold (Late Blight), white powdery coating (Powdery Mildew), rust-colored pustules (Rust), dark sunken lesions (Anthracnose).
-     * Bacterial: Angular water-soaked spots with yellow halos (Bacterial Leaf Spot), vascular wilting.
-     * Viral: Mosaic discoloration, leaf curling, mottling, stunting.
-     * Nutrient Deficiencies: Interveinal chlorosis (Iron/Magnesium), uniform yellowing (Nitrogen), purple leaf tinting (Phosphorus), leaf edge burn (Potassium).
-     * Pest Damage: Chewed leaf margins, stippling, mite webbing, leaf miners.
-   - If the leaf is vigorous, green, and free of pathology:
-     * disease.detected = false
-     * disease.name = "Healthy Plant / No Disease Detected"
-     * disease.severity = "None"
-     * disease.description = "Foliage exhibits healthy coloration, intact vascular venation, and no visible signs of pathogen infection or nutrient distress."
-
-3. SEVERITY & FOLIAGE AREA RATIO:
-   - Estimate affected_percentage: Visible percentage of leaf surface exhibiting lesions, necrosis, chlorosis, or damage (0-100).
-   - Estimate healthy_percentage: (100 - affected_percentage).
-   - Set severity: "None" (0%), "Low" (1-15%), "Moderate" (16-40%), "High" (41-70%), "Severe" (71-100%).
-
-4. FERTILIZER & SOIL NUTRITION:
-   - If diseased or deficient, recommend safe corrective fertilizers (e.g., Foliar micronutrient spray, Balanced NPK 19-19-19, Potassium sulphate, Calcium nitrate).
-   - Do NOT guess exact toxic chemical dosages. Specify standard agronomic guidelines (e.g., "Apply 2-3 g/L foliar spray during early morning or as per local extension service").
-
-5. CONFIDENCE SCORING GUIDELINE:
-   - Realistic calibration based on visual clarity (Never output 0% for recognizable photos):
-     * Clear, in-focus leaf image: 80% – 98%
-     * Slightly blurry or distant photo: 60% – 79%
-     * Highly ambiguous / unidentifiable: 30% – 59%
-
-Return ONLY a valid, raw JSON object conforming strictly to this schema:
+Return ONLY a valid, raw JSON object conforming strictly to this schema without markdown fences:
 {
   "analysis_status": "SUCCESS",
-  "crop": {
-    "name": "Crop Name",
-    "confidence": 92
-  },
+  "crop": { "name": "Crop Name", "confidence": 92 },
   "disease": {
     "detected": true,
     "name": "Disease Name or Healthy Plant",
     "confidence": 88,
     "severity": "Low | Moderate | High | Severe | None",
-    "description": "Detailed explanation of observed pathology"
+    "description": "Short explanation of observed pathology"
   },
   "affected_percentage": 25,
   "healthy_percentage": 75,
   "fertilizer": {
     "recommended": true,
-    "reason": "Agronomical reason for fertilizer guidance",
+    "reason": "Fertilizer purpose",
     "recommendations": [
       {
-        "name": "Fertilizer Category/Name",
-        "purpose": "Why this is recommended",
-        "amount": "Recommended application rate/guideline",
+        "name": "Fertilizer Name",
+        "purpose": "Why recommended",
+        "amount": "Recommended rate",
         "unit": "g/L or kg/acre",
-        "notes": "Application timing and precautions"
+        "notes": "Application timing"
       }
     ]
   },
-  "evidence": [
-    "Specific observable symptom 1",
-    "Specific observable symptom 2"
-  ],
-  "precautions": [
-    "Cultural or chemical precaution 1",
-    "Precaution 2"
-  ],
-  "recommended_actions": [
-    "Immediate action 1",
-    "Action 2"
-  ],
-  "image_quality": "Excellent | Good | Fair | Poor",
+  "evidence": ["Observable symptom 1", "Observable symptom 2"],
+  "precautions": ["Precaution 1", "Precaution 2"],
+  "recommended_actions": ["Action 1", "Action 2"],
+  "image_quality": "Good",
   "overall_confidence": 90,
   "needs_expert_confirmation": false
 }
 `;
 
-const MODEL_CASCADES = [
-    'gemini-3.8-flash',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-2.5-flash'
-];
-
-async function callModernGemini(genAI, base64Data, mimeType) {
+// Fast direct targets: Primary 2.5-flash with immediate 1.5-flash fallback
+async function callGeminiFast(genAI, base64Data, mimeType) {
     const imagePart = { inlineData: { data: base64Data, mimeType } };
-    let lastErr = null;
+    const models = ['gemini-2.5-flash', 'gemini-1.5-flash'];
 
-    for (const model of MODEL_CASCADES) {
+    for (const modelName of models) {
         try {
-            const gModel = genAI.getGenerativeModel({
-                model,
+            const model = genAI.getGenerativeModel({
+                model: modelName,
                 generationConfig: {
                     responseMimeType: 'application/json',
-                    temperature: 0.2 // Lower temperature for high medical/agronomic diagnostic precision
+                    temperature: 0.2
                 }
             });
-            const result = await gModel.generateContent([SYSTEM_PROMPT, imagePart]);
+            const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
             return result.response.text();
         } catch (err) {
-            lastErr = err;
-            await new Promise(r => setTimeout(r, 400));
+            console.warn(`Model ${modelName} failed (${err.message}). Trying quick backup...`);
         }
     }
-    throw lastErr;
+    throw new Error('Analysis service is currently busy. Please try again.');
 }
 
 exports.handler = async (event) => {
@@ -123,7 +77,7 @@ exports.handler = async (event) => {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        return { statusCode: 500, body: JSON.stringify({ error: 'GEMINI_API_KEY not configured in Netlify.' }) };
+        return { statusCode: 500, body: JSON.stringify({ error: 'GEMINI_API_KEY is not configured in Netlify.' }) };
     }
 
     return new Promise((resolve) => {
@@ -153,10 +107,10 @@ exports.handler = async (event) => {
 
                 try {
                     const genAI = new GoogleGenerativeAI(apiKey);
-                    const rawText = await callModernGemini(genAI, fileBuffer.toString('base64'), mimeType);
+                    const rawText = await callGeminiFast(genAI, fileBuffer.toString('base64'), mimeType);
                     const parsedData = JSON.parse(rawText.replace(/```json\n?|\n?```/g, '').trim());
 
-                    // Confidence & Ratio Sanitization
+                    // Confidence & score sanitization
                     const cropConf = Math.max(parsedData.crop?.confidence || 75, 60);
                     const disConf = Math.max(parsedData.disease?.confidence || 70, 55);
                     const overallConf = Math.max(parsedData.overall_confidence || Math.round((cropConf + disConf) / 2), 65);
@@ -165,7 +119,7 @@ exports.handler = async (event) => {
                     if (parsedData.disease) parsedData.disease.confidence = disConf;
                     parsedData.overall_confidence = overallConf;
 
-                    // Area calculation
+                    // Area calculations
                     const totalArea = parseFloat(fields.totalArea);
                     const areaUnit = fields.areaUnit || 'acres';
                     const affectedPct = Math.min(100, Math.max(0, parsedData.affected_percentage || 0));
@@ -189,9 +143,9 @@ exports.handler = async (event) => {
                 } catch (apiErr) {
                     console.error('Diagnostic error:', apiErr);
                     return resolve({
-                        statusCode: 503,
+                        statusCode: 500,
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ error: 'AI diagnostic service busy. Please try again with a clear photo.' })
+                        body: JSON.stringify({ error: apiErr.message || 'AI service busy. Please try again.' })
                     });
                 }
             });
