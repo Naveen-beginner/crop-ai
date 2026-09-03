@@ -48,7 +48,7 @@ Return ONLY a valid, raw JSON object matching this schema:
 `;
 
 // Strictly 3.6 and above models
-const MODERN_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash'];
+const MODERN_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash'];
 
 async function callGemini36(genAI, base64Data, mimeType) {
     const imagePart = { inlineData: { data: base64Data, mimeType } };
