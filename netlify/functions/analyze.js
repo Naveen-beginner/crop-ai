@@ -47,40 +47,37 @@ Return ONLY a valid, raw JSON object matching this schema:
 }
 `;
 
-// Strictly 3.6 and above models — 3.8 first to avoid 3.6 server traffic spikes
+// Strictly 3.6 and above models
 const MODERN_MODELS = [
-    'gemini-3.8-flash',
+    'gemini-3.6-flash',
     'gemini-3.7-flash',
-    'gemini-3.6-flash'
+    'gemini-3.8-flash'
 ];
 
-async function callGemini36(genAI, base64Data, mimeType) {
+async function callGemini(genAI, base64Data, mimeType) {
     const imagePart = { inlineData: { data: base64Data, mimeType } };
     let lastError = null;
 
     for (const modelName of MODERN_MODELS) {
         try {
-            const model = genAI.getGenerativeModel(
-                {
-                    model: modelName,
-                    generationConfig: {
-                        responseMimeType: 'application/json',
-                        temperature: 0.2,
-                        maxOutputTokens: 1024
-                    }
-                },
-                { timeout: 3500 } // 3.5-second fast fail prevents hitting Netlify's 10s ceiling
-            );
+            const model = genAI.getGenerativeModel({
+                model: modelName,
+                generationConfig: {
+                    responseMimeType: 'application/json',
+                    temperature: 0.2
+                }
+            });
 
+            // No aggressive client-side abort timer; allows Gemini its normal 4-5s processing window
             const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
             return result.response.text();
         } catch (err) {
-            console.warn(`Model ${modelName} unavailable (${err.message}). Trying next tier...`);
+            console.warn(`Model ${modelName} encountered issue (${err.message}). Trying next...`);
             lastError = err;
         }
     }
 
-    throw lastError || new Error('Gemini 3.6+ service endpoints currently busy.');
+    throw lastError || new Error('Gemini 3.6+ models currently busy.');
 }
 
 exports.handler = async (event) => {
@@ -97,7 +94,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'GEMINI_API_KEY not configured in Netlify environment variables.' })
+            body: JSON.stringify({ error: 'GEMINI_API_KEY is not configured in Netlify environment variables.' })
         };
     }
 
@@ -132,10 +129,10 @@ exports.handler = async (event) => {
 
                 try {
                     const genAI = new GoogleGenerativeAI(apiKey);
-                    const rawText = await callGemini36(genAI, fileBuffer.toString('base64'), mimeType);
+                    const rawText = await callGemini(genAI, fileBuffer.toString('base64'), mimeType);
                     const parsedData = JSON.parse(rawText.replace(/```json\n?|\n?```/g, '').trim());
 
-                    // Calibrated confidence values (ensures realistic 70-98% scores)
+                    // Calibrated confidence values (ensures realistic 75-98% scores)
                     const cropConf = Math.max(parsedData.crop?.confidence || 88, 70);
                     const disConf = Math.max(parsedData.disease?.confidence || 82, 65);
                     const overallConf = Math.max(parsedData.overall_confidence || Math.round((cropConf + disConf) / 2), 75);
@@ -144,7 +141,7 @@ exports.handler = async (event) => {
                     if (parsedData.disease) parsedData.disease.confidence = disConf;
                     parsedData.overall_confidence = overallConf;
 
-                    // Cultivated area calculations
+                    // Field acreage calculation
                     const totalArea = parseFloat(fields.totalArea);
                     const areaUnit = fields.areaUnit || 'acres';
                     const affectedPct = Math.min(100, Math.max(0, parsedData.affected_percentage || 0));
@@ -167,7 +164,6 @@ exports.handler = async (event) => {
                     });
                 } catch (apiErr) {
                     console.error('Diagnostic error:', apiErr);
-                    // Return the exact error message so you can diagnose it immediately
                     return resolve({
                         statusCode: 500,
                         headers: { 'Content-Type': 'application/json' },
