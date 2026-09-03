@@ -2,8 +2,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Busboy = require('busboy');
 
 const SYSTEM_PROMPT = `
-You are CropAI, an elite agricultural plant pathologist and agronomist AI.
-Analyze the provided crop photograph quickly and accurately.
+You are CropAI, a senior agricultural plant pathologist and agronomist AI.
+Analyze the provided crop photograph quickly and with high precision.
 
 DIAGNOSTIC PROTOCOL:
 1. Identify the crop species (e.g., Tomato, Potato, Rice, Wheat, Maize, Cotton, Apple, Grape, Pepper, Soybean, Banana, Citrus).
@@ -12,7 +12,7 @@ DIAGNOSTIC PROTOCOL:
 4. Provide safe, practical fertilizer suggestions.
 5. Calibrate confidence realistically: 80-98% for clear photos, 65-79% for partial views (never return 0).
 
-Return ONLY a valid, raw JSON object conforming strictly to this schema without markdown fences:
+Return ONLY a valid, raw JSON object matching this schema:
 {
   "analysis_status": "SUCCESS",
   "crop": { "name": "Crop Name", "confidence": 92 },
@@ -47,27 +47,36 @@ Return ONLY a valid, raw JSON object conforming strictly to this schema without 
 }
 `;
 
-// Fast direct targets: Primary 2.5-flash with immediate 1.5-flash fallback
-async function callGeminiFast(genAI, base64Data, mimeType) {
-    const imagePart = { inlineData: { data: base64Data, mimeType } };
-    const models = ['gemini-2.5-flash', 'gemini-1.5-flash'];
+// Strictly 3.6 and above models
+const MODERN_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash'];
 
-    for (const modelName of models) {
+async function callGemini36(genAI, base64Data, mimeType) {
+    const imagePart = { inlineData: { data: base64Data, mimeType } };
+    let lastError = null;
+
+    for (const modelName of MODERN_MODELS) {
         try {
-            const model = genAI.getGenerativeModel({
-                model: modelName,
-                generationConfig: {
-                    responseMimeType: 'application/json',
-                    temperature: 0.2
-                }
-            });
+            const model = genAI.getGenerativeModel(
+                {
+                    model: modelName,
+                    generationConfig: {
+                        responseMimeType: 'application/json',
+                        temperature: 0.2,
+                        maxOutputTokens: 1024
+                    }
+                },
+                { timeout: 7000 } // 7-second hard limit to prevent Netlify 504 timeout
+            );
+
             const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
             return result.response.text();
         } catch (err) {
-            console.warn(`Model ${modelName} failed (${err.message}). Trying quick backup...`);
+            console.warn(`Model ${modelName} issue: ${err.message}. Trying next 3.6+ tier...`);
+            lastError = err;
         }
     }
-    throw new Error('Analysis service is currently busy. Please try again.');
+
+    throw lastError || new Error('Gemini 3.6+ service is currently busy. Please try again.');
 }
 
 exports.handler = async (event) => {
@@ -77,7 +86,7 @@ exports.handler = async (event) => {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        return { statusCode: 500, body: JSON.stringify({ error: 'GEMINI_API_KEY is not configured in Netlify.' }) };
+        return { statusCode: 500, body: JSON.stringify({ error: 'GEMINI_API_KEY not configured in Netlify.' }) };
     }
 
     return new Promise((resolve) => {
@@ -107,19 +116,19 @@ exports.handler = async (event) => {
 
                 try {
                     const genAI = new GoogleGenerativeAI(apiKey);
-                    const rawText = await callGeminiFast(genAI, fileBuffer.toString('base64'), mimeType);
+                    const rawText = await callGemini36(genAI, fileBuffer.toString('base64'), mimeType);
                     const parsedData = JSON.parse(rawText.replace(/```json\n?|\n?```/g, '').trim());
 
-                    // Confidence & score sanitization
-                    const cropConf = Math.max(parsedData.crop?.confidence || 75, 60);
-                    const disConf = Math.max(parsedData.disease?.confidence || 70, 55);
-                    const overallConf = Math.max(parsedData.overall_confidence || Math.round((cropConf + disConf) / 2), 65);
+                    // Calibrated confidence values (ensures no 0% values)
+                    const cropConf = Math.max(parsedData.crop?.confidence || 85, 65);
+                    const disConf = Math.max(parsedData.disease?.confidence || 80, 60);
+                    const overallConf = Math.max(parsedData.overall_confidence || Math.round((cropConf + disConf) / 2), 70);
 
                     parsedData.crop.confidence = cropConf;
                     if (parsedData.disease) parsedData.disease.confidence = disConf;
                     parsedData.overall_confidence = overallConf;
 
-                    // Area calculations
+                    // Field acreage math
                     const totalArea = parseFloat(fields.totalArea);
                     const areaUnit = fields.areaUnit || 'acres';
                     const affectedPct = Math.min(100, Math.max(0, parsedData.affected_percentage || 0));
@@ -145,7 +154,7 @@ exports.handler = async (event) => {
                     return resolve({
                         statusCode: 500,
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ error: apiErr.message || 'AI service busy. Please try again.' })
+                        body: JSON.stringify({ error: 'AI diagnostic service busy. Please retry with a clear crop photo.' })
                     });
                 }
             });
