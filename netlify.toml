@@ -2,10 +2,6 @@
   publish = "public"
   functions = "netlify/functions"
 
-[functions]
-  node_bundler = "esbuild"
-  timeout = 26
-
 [[redirects]]
   from = "/api/analyze"
   to = "/.netlify/functions/analyze"
