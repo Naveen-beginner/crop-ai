@@ -1,5 +1,5 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Busboy = require('busboy');
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import Busboy from 'busboy';
 
 const SYSTEM_PROMPT = `
 You are CropAI, a senior agricultural plant pathologist and agronomist AI.
@@ -80,7 +80,7 @@ async function callGemini(genAI, base64Data, mimeType) {
     throw lastError || new Error('Gemini 3.6+ models currently busy.');
 }
 
-exports.handler = async (event) => {
+export const handler = async (event) => {
     if (event.httpMethod !== 'POST') {
         return {
             statusCode: 405,
