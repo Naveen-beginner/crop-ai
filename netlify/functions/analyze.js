@@ -3,16 +3,8 @@ import Busboy from 'busboy';
 
 const SYSTEM_PROMPT = `
 You are CropAI, a senior agricultural plant pathologist and agronomist AI.
-Analyze the provided crop photograph quickly and with high precision.
+Analyze the provided crop photograph and respond with ONLY a raw valid JSON object conforming strictly to this schema without markdown fences:
 
-DIAGNOSTIC PROTOCOL:
-1. Identify the crop species (e.g., Tomato, Potato, Rice, Wheat, Maize, Cotton, Apple, Grape, Pepper, Soybean, Banana, Citrus).
-2. Check for foliar diseases (Early/Late Blight, Powdery/Downy Mildew, Rust, Leaf Spot, Anthracnose, Mosaic Virus, Chlorosis). If healthy, set disease.detected to false, disease.name to "Healthy Plant / No Disease Detected", and severity to "None".
-3. Estimate percentage of visible foliage affected vs healthy (must total ~100%).
-4. Provide safe, practical fertilizer suggestions.
-5. Calibrate confidence realistically: 80-98% for clear photos, 65-79% for partial views (never return 0).
-
-Return ONLY a valid, raw JSON object matching this schema:
 {
   "analysis_status": "SUCCESS",
   "crop": { "name": "Crop Name", "confidence": 92 },
@@ -47,22 +39,42 @@ Return ONLY a valid, raw JSON object matching this schema:
 }
 `;
 
+const MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+
+async function callGemini(genAI, base64Data, mimeType) {
+    const imagePart = { inlineData: { data: base64Data, mimeType } };
+    let lastError = null;
+
+    for (const modelName of MODELS) {
+        try {
+            const model = genAI.getGenerativeModel({
+                model: modelName,
+                generationConfig: {
+                    responseMimeType: 'application/json',
+                    temperature: 0.2,
+                    maxOutputTokens: 2048 // Sufficient token headroom so JSON never truncates
+                }
+            });
+
+            const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
+            return result.response.text();
+        } catch (err) {
+            console.warn(`Model ${modelName} error: ${err.message}. Trying next available tier...`);
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('All model endpoints busy.');
+}
+
 export async function handler(event) {
     if (event.httpMethod !== 'POST') {
-        return {
-            statusCode: 405,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'Method Not Allowed' })
-        };
+        return { statusCode: 405, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'Method Not Allowed' }) };
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        return {
-            statusCode: 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'GEMINI_API_KEY is not configured in Netlify.' })
-        };
+        return { statusCode: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'GEMINI_API_KEY not configured in Netlify.' }) };
     }
 
     return new Promise((resolve) => {
@@ -87,42 +99,29 @@ export async function handler(event) {
 
             busboy.on('finish', async () => {
                 if (!fileBuffer || fileBuffer.length === 0) {
-                    return resolve({
-                        statusCode: 400,
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ error: 'No image uploaded.' })
-                    });
+                    return resolve({ statusCode: 400, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'No image uploaded.' }) });
                 }
 
                 try {
                     const genAI = new GoogleGenerativeAI(apiKey);
+                    const rawResponse = await callGemini(genAI, fileBuffer.toString('base64'), mimeType);
 
-                    // Use gemini-3.6-flash with capped tokens for fast ~1.5s inference
-                    const model = genAI.getGenerativeModel({
-                        model: 'gemini-3.6-flash',
-                        generationConfig: {
-                            responseMimeType: 'application/json',
-                            temperature: 0.2,
-                            maxOutputTokens: 800
+                    // Clean markdown wrappers and whitespace
+                    const cleaned = rawResponse.replace(/```json\s*|\s*```/g, '').trim();
+
+                    let parsedData;
+                    try {
+                        parsedData = JSON.parse(cleaned);
+                    } catch (jsonErr) {
+                        const match = cleaned.match(/\{[\s\S]*\}/);
+                        if (match) {
+                            parsedData = JSON.parse(match[0]);
+                        } else {
+                            throw new Error('AI output was malformed. Please retry.');
                         }
-                    });
-
-                    const imagePart = {
-                        inlineData: {
-                            data: fileBuffer.toString('base64'),
-                            mimeType
-                        }
-                    };
-
-                    const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
-                    const rawResponse = result.response.text();
-
-                    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-                    if (!jsonMatch) {
-                        throw new Error('AI returned an invalid JSON response.');
                     }
-                    const parsedData = JSON.parse(jsonMatch[0]);
 
+                    // Calibrated confidence values
                     const cropConf = Math.max(parsedData.crop?.confidence || 88, 70);
                     const disConf = Math.max(parsedData.disease?.confidence || 82, 65);
                     const overallConf = Math.max(parsedData.overall_confidence || Math.round((cropConf + disConf) / 2), 75);
@@ -131,6 +130,7 @@ export async function handler(event) {
                     if (parsedData.disease) parsedData.disease.confidence = disConf;
                     parsedData.overall_confidence = overallConf;
 
+                    // Field acreage calculation
                     const totalArea = parseFloat(fields.totalArea);
                     const areaUnit = fields.areaUnit || 'acres';
                     const affectedPct = Math.min(100, Math.max(0, parsedData.affected_percentage || 0));
@@ -165,11 +165,7 @@ export async function handler(event) {
             busboy.write(bodyData);
             busboy.end();
         } catch (e) {
-            resolve({
-                statusCode: 500,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ error: 'Server error: ' + e.message })
-            });
+            resolve({ statusCode: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'Server error: ' + e.message }) });
         }
     });
 }
