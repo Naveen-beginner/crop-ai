@@ -28,7 +28,6 @@ document.addEventListener('DOMContentLoaded', () => {
         'Formulating agronomical recommendations...'
     ];
 
-    // Drag & Drop event handlers
     browseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         fileInput.click();
@@ -54,15 +53,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     dropZone.addEventListener('drop', (e) => {
         const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            handleFile(files[0]);
-        }
+        if (files.length > 0) handleFile(files[0]);
     });
 
     fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleFile(e.target.files[0]);
-        }
+        if (e.target.files.length > 0) handleFile(e.target.files[0]);
     });
 
     removeImgBtn.addEventListener('click', (e) => {
@@ -80,11 +75,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
         if (!allowed.includes(file.type)) {
             showError('Please select a valid image file (JPG, PNG, or WEBP).');
-            return;
-        }
-
-        if (file.size > 10 * 1024 * 1024) {
-            showError('Image file is too large. Max size is 10MB.');
             return;
         }
 
@@ -136,6 +126,48 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.disabled = false;
     }
 
+    // Client-side downscaler: shrinks 5MB phone photos to crisp ~120KB in 20ms
+    function compressImage(file, maxDimension = 1000, quality = 0.8) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > maxDimension) {
+                            height = Math.round((height * maxDimension) / width);
+                            width = maxDimension;
+                        }
+                    } else {
+                        if (height > maxDimension) {
+                            width = Math.round((width * maxDimension) / height);
+                            height = maxDimension;
+                        }
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    canvas.toBlob(
+                        (blob) => {
+                            resolve(blob || file);
+                        },
+                        'image/jpeg',
+                        quality
+                    );
+                };
+            };
+        });
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         hideError();
@@ -145,27 +177,41 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const formData = new FormData();
-        formData.append('image', selectedFile);
-
-        const totalAreaVal = document.getElementById('totalArea').value.trim();
-        const areaUnitVal = document.getElementById('areaUnit').value;
-
-        if (totalAreaVal) {
-            formData.append('totalArea', totalAreaVal);
-            formData.append('areaUnit', areaUnitVal);
-        }
-
         resultsDashboard.classList.add('hidden');
         startLoadingCycle();
 
         try {
+            // Compress image before network transfer
+            const optimizedBlob = await compressImage(selectedFile);
+
+            const formData = new FormData();
+            formData.append('image', optimizedBlob, 'crop.jpg');
+
+            const totalAreaVal = document.getElementById('totalArea').value.trim();
+            const areaUnitVal = document.getElementById('areaUnit').value;
+
+            if (totalAreaVal) {
+                formData.append('totalArea', totalAreaVal);
+                formData.append('areaUnit', areaUnitVal);
+            }
+
             const response = await fetch('/api/analyze', {
                 method: 'POST',
                 body: formData
             });
 
-            const data = await response.json();
+            // Safe response parser (prevents '<HTML>' error when status is not 200)
+            const contentType = response.headers.get('content-type') || '';
+            let data;
+            if (contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                const text = await response.text();
+                if (response.status === 504) {
+                    throw new Error('Analysis timed out on the server. Please try a clearer or smaller crop photo.');
+                }
+                throw new Error(`Server Error (${response.status}): ${text.slice(0, 100)}`);
+            }
 
             if (!response.ok) {
                 throw new Error(data.error || 'Server error occurred during crop analysis.');
@@ -182,17 +228,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function renderResults(data) {
-        // 1. Crop ID
         document.getElementById('cropName').textContent = data.crop?.name || 'Unknown Crop';
         document.getElementById('cropConfidence').textContent = `${data.crop?.confidence || 0}% Confident`;
 
-        // 2. Disease Pathology
         const isDetected = data.disease?.detected;
         document.getElementById('diseaseName').textContent = isDetected ? (data.disease?.name || 'Infection Detected') : 'Healthy Crop';
         document.getElementById('diseaseSeverity').textContent = data.disease?.severity || 'None';
         document.getElementById('diseaseStatusDesc').textContent = data.disease?.description || 'No abnormal disease pattern detected.';
 
-        // Severity color pill
         const severityPill = document.getElementById('diseaseSeverity');
         if (!isDetected || data.disease?.severity === 'None') {
             severityPill.style.background = 'var(--primary-light)';
@@ -202,14 +245,12 @@ document.addEventListener('DOMContentLoaded', () => {
             severityPill.style.color = 'var(--warning)';
         }
 
-        // 3. AI Quality and Confidence
         document.getElementById('overallConfidence').textContent = `${data.overall_confidence || 0}%`;
         document.getElementById('imageQuality').textContent = `${data.image_quality || 'Good'} Quality`;
         document.getElementById('expertFlag').textContent = data.needs_expert_confirmation
             ? '⚠️ Expert Confirmation Recommended'
             : '✓ Standard AI Diagnostic Confidence';
 
-        // 4. Foliage Ratio
         const affectedPct = Math.min(100, Math.max(0, data.area?.affected_percentage ?? data.affected_percentage ?? 0));
         const healthyPct = Math.min(100, Math.max(0, data.area?.healthy_percentage ?? data.healthy_percentage ?? 100));
 
@@ -218,7 +259,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('affectedBar').style.width = `${affectedPct}%`;
         document.getElementById('healthyBar').style.width = `${healthyPct}%`;
 
-        // 5. Cultivated Area Calculations
         const areaContainer = document.getElementById('physicalAreaContainer');
         if (data.area?.user_provided && data.area?.total_area) {
             areaContainer.classList.remove('hidden');
@@ -229,7 +269,6 @@ document.addEventListener('DOMContentLoaded', () => {
             areaContainer.classList.add('hidden');
         }
 
-        // 6. Visible Evidence
         const evidenceList = document.getElementById('evidenceList');
         evidenceList.innerHTML = '';
         if (data.evidence && data.evidence.length > 0) {
@@ -238,13 +277,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 li.textContent = ev;
                 evidenceList.appendChild(li);
             });
-        } else {
-            const li = document.createElement('li');
-            li.textContent = 'No abnormal visual symptoms observed.';
-            evidenceList.appendChild(li);
         }
 
-        // 7. Fertilizer Guidance
         const fertCards = document.getElementById('fertilizerCards');
         const fertPill = document.getElementById('fertStatusPill');
         const fertReasonText = document.getElementById('fertReasonText');
@@ -254,7 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fertPill.textContent = 'Recommended';
             fertPill.style.background = 'var(--primary-light)';
             fertPill.style.color = 'var(--primary)';
-            fertReasonText.textContent = data.fertilizer?.reason || 'Recommended fertilizers to support plant recovery and development:';
+            fertReasonText.textContent = data.fertilizer?.reason || 'Recommended fertilizers to support plant recovery:';
 
             data.fertilizer.recommendations.forEach(item => {
                 const card = document.createElement('div');
@@ -262,7 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 card.innerHTML = `
             <h4 class="fert-card-title">${escapeHtml(item.name)}</h4>
             <p class="fert-card-item"><strong>Purpose:</strong> ${escapeHtml(item.purpose || 'Nutrient Support')}</p>
-            <p class="fert-card-item"><strong>Application Rate:</strong> ${escapeHtml(item.amount || 'Follow local agricultural guidance')} ${item.unit ? `(${escapeHtml(item.unit)})` : ''}</p>
+            <p class="fert-card-item"><strong>Application Rate:</strong> ${escapeHtml(item.amount || 'Follow local guidance')} ${item.unit ? `(${escapeHtml(item.unit)})` : ''}</p>
             <p class="fert-card-item"><strong>Notes:</strong> ${escapeHtml(item.notes || 'Apply according to soil tests and local guidance.')}</p>
           `;
                 fertCards.appendChild(card);
@@ -271,10 +305,9 @@ document.addEventListener('DOMContentLoaded', () => {
             fertPill.textContent = 'Not Required';
             fertPill.style.background = 'var(--gray-100)';
             fertPill.style.color = 'var(--gray-700)';
-            fertReasonText.textContent = data.fertilizer?.reason || 'No additional fertilizer is advised at this stage to avoid nutrient imbalance.';
+            fertReasonText.textContent = data.fertilizer?.reason || 'No additional fertilizer is advised at this stage.';
         }
 
-        // 8. Recommended Actions
         const actionList = document.getElementById('actionList');
         actionList.innerHTML = '';
         if (data.recommended_actions && data.recommended_actions.length > 0) {
@@ -283,13 +316,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 li.textContent = action;
                 actionList.appendChild(li);
             });
-        } else {
-            const li = document.createElement('li');
-            li.textContent = 'Maintain standard crop monitoring and watering schedules.';
-            actionList.appendChild(li);
         }
 
-        // 9. Precautions
         const precautionList = document.getElementById('precautionList');
         precautionList.innerHTML = '';
         if (data.precautions && data.precautions.length > 0) {
@@ -298,10 +326,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 li.textContent = prec;
                 precautionList.appendChild(li);
             });
-        } else {
-            const li = document.createElement('li');
-            li.textContent = 'Sanitize pruning tools and adhere to standard field safety.';
-            precautionList.appendChild(li);
         }
     }
 

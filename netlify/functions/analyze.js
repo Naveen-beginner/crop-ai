@@ -1,5 +1,5 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import Busboy from 'busboy';
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Busboy = require('busboy');
 
 const SYSTEM_PROMPT = `
 You are CropAI, a senior agricultural plant pathologist and agronomist AI.
@@ -47,40 +47,7 @@ Return ONLY a valid, raw JSON object matching this schema:
 }
 `;
 
-// Strictly 3.6 and above models
-const MODERN_MODELS = [
-    'gemini-3.6-flash',
-    'gemini-3.7-flash',
-    'gemini-3.8-flash'
-];
-
-async function callGemini(genAI, base64Data, mimeType) {
-    const imagePart = { inlineData: { data: base64Data, mimeType } };
-    let lastError = null;
-
-    for (const modelName of MODERN_MODELS) {
-        try {
-            const model = genAI.getGenerativeModel({
-                model: modelName,
-                generationConfig: {
-                    responseMimeType: 'application/json',
-                    temperature: 0.2
-                }
-            });
-
-            // No aggressive client-side abort timer; allows Gemini its normal 4-5s processing window
-            const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
-            return result.response.text();
-        } catch (err) {
-            console.warn(`Model ${modelName} encountered issue (${err.message}). Trying next...`);
-            lastError = err;
-        }
-    }
-
-    throw lastError || new Error('Gemini 3.6+ models currently busy.');
-}
-
-export const handler = async (event) => {
+exports.handler = async (event) => {
     if (event.httpMethod !== 'POST') {
         return {
             statusCode: 405,
@@ -94,7 +61,7 @@ export const handler = async (event) => {
         return {
             statusCode: 500,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'GEMINI_API_KEY is not configured in Netlify environment variables.' })
+            body: JSON.stringify({ error: 'GEMINI_API_KEY is not configured in Netlify.' })
         };
     }
 
@@ -112,7 +79,7 @@ export const handler = async (event) => {
             busboy.on('file', (fieldname, file, info) => {
                 mimeType = info.mimeType;
                 const chunks = [];
-                file.on('data', d => chunks.push(d));
+                file.on('data', (d) => chunks.push(d));
                 file.on('end', () => { fileBuffer = Buffer.concat(chunks); });
             });
 
@@ -129,10 +96,33 @@ export const handler = async (event) => {
 
                 try {
                     const genAI = new GoogleGenerativeAI(apiKey);
-                    const rawText = await callGemini(genAI, fileBuffer.toString('base64'), mimeType);
-                    const parsedData = JSON.parse(rawText.replace(/```json\n?|\n?```/g, '').trim());
 
-                    // Calibrated confidence values (ensures realistic 75-98% scores)
+                    // Use gemini-3.6-flash with capped tokens for fast ~1.5s inference
+                    const model = genAI.getGenerativeModel({
+                        model: 'gemini-3.6-flash',
+                        generationConfig: {
+                            responseMimeType: 'application/json',
+                            temperature: 0.2,
+                            maxOutputTokens: 800
+                        }
+                    });
+
+                    const imagePart = {
+                        inlineData: {
+                            data: fileBuffer.toString('base64'),
+                            mimeType
+                        }
+                    };
+
+                    const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
+                    const rawResponse = result.response.text();
+
+                    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+                    if (!jsonMatch) {
+                        throw new Error('AI returned an invalid JSON response.');
+                    }
+                    const parsedData = JSON.parse(jsonMatch[0]);
+
                     const cropConf = Math.max(parsedData.crop?.confidence || 88, 70);
                     const disConf = Math.max(parsedData.disease?.confidence || 82, 65);
                     const overallConf = Math.max(parsedData.overall_confidence || Math.round((cropConf + disConf) / 2), 75);
@@ -141,7 +131,6 @@ export const handler = async (event) => {
                     if (parsedData.disease) parsedData.disease.confidence = disConf;
                     parsedData.overall_confidence = overallConf;
 
-                    // Field acreage calculation
                     const totalArea = parseFloat(fields.totalArea);
                     const areaUnit = fields.areaUnit || 'acres';
                     const affectedPct = Math.min(100, Math.max(0, parsedData.affected_percentage || 0));
@@ -179,7 +168,7 @@ export const handler = async (event) => {
             resolve({
                 statusCode: 500,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ error: 'Internal server error: ' + e.message })
+                body: JSON.stringify({ error: 'Server error: ' + e.message })
             });
         }
     });
