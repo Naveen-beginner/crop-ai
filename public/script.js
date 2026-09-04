@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const removeImgBtn = document.getElementById('removeImgBtn');
     const browseBtn = document.getElementById('browseBtn');
     const submitBtn = document.getElementById('submitBtn');
-
+ 
     const errorBox = document.getElementById('errorBox');
     const errorMessage = document.getElementById('errorMessage');
 
