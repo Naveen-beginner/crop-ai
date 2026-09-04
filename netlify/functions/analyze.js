@@ -1,5 +1,5 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Busboy = require('busboy');
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import Busboy from 'busboy';
 
 const SYSTEM_PROMPT = `
 You are CropAI, a senior agricultural plant pathologist and agronomist AI.
@@ -47,7 +47,7 @@ Return ONLY a valid, raw JSON object matching this schema:
 }
 `;
 
-exports.handler = async (event) => {
+export async function handler(event) {
     if (event.httpMethod !== 'POST') {
         return {
             statusCode: 405,
@@ -172,4 +172,4 @@ exports.handler = async (event) => {
             });
         }
     });
-};
+}
